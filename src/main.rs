@@ -4,8 +4,9 @@ use std::error::Error;
 use std::io::Write;
 use std::os::linux::net::SocketAddrExt;
 use std::os::unix::net::{SocketAddr, UnixListener, UnixStream};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use time::{Duration, OffsetDateTime};
+use notify_rust::{Notification, NotificationHandle, Urgency};
 
 /// The name of the "updates" socket in the abstract namespace.
 const SOCKET_NAME_UPDATES: &[u8] = b"waybar_timer_updates";
@@ -13,14 +14,31 @@ const SOCKET_NAME_UPDATES: &[u8] = b"waybar_timer_updates";
 const SOCKET_NAME_COMMANDS: &[u8] = b"waybar_timer_commands";
 /// The interval in which updates are pulled.
 const INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+/// Notification object, saved to be updated.
+static TIMER_NOTIFICATION: OnceLock<Mutex<Option<NotificationHandle>>> =
+    OnceLock::new();
 
 fn send_notification(summary: String) {
-    let _ = notify_rust::Notification::new()
-        .appname("Waybar Timer")
-        .id(12345)
-        .summary(&summary)
-        .urgency(notify_rust::Urgency::Low)
-        .show();
+    let notification = TIMER_NOTIFICATION
+        .get_or_init(|| Mutex::new(None));
+
+    let mut handle = notification.lock().unwrap();
+
+    if let Some(existing) = handle.as_mut() {
+        existing
+            .appname("Waybar Timer")
+            .summary(&summary)
+            .urgency(Urgency::Low);
+
+        let _ = existing.update();
+    } else {
+        *handle = Notification::new()
+            .appname("Waybar Timer")
+            .summary(&summary)
+            .urgency(Urgency::Low)
+            .show()
+            .ok();
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
